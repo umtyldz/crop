@@ -1,0 +1,1487 @@
+<!DOCTYPE html>
+<html lang="tr" class="dark">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>PikselKırp — Çoklu Boyut Görsel Kırpma ve WebP/JPG Dönüştürücü</title>
+    <script src="https://cdn.tailwindcss.com"></script>
+    <link rel="preconnect" href="https://fonts.googleapis.com">
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700&family=JetBrains+Mono:wght@400;500;600&display=swap" rel="stylesheet">
+    <script>
+        tailwind.config = {
+            darkMode: 'class',
+            theme: {
+                extend: {
+                    fontFamily: {
+                        sans: ['Inter', 'sans-serif'],
+                        mono: ['JetBrains Mono', 'monospace'],
+                    },
+                    colors: {
+                        brand: {
+                            50: '#eef2ff',
+                            100: '#e0e7ff',
+                            400: '#818cf8',
+                            500: '#6366f1',
+                            600: '#4f46e5',
+                            700: '#4338ca',
+                        }
+                    }
+                }
+            }
+        }
+    </script>
+    <style>
+        body {
+            font-family: 'Inter', sans-serif;
+        }
+        /* Checkerboard pattern for transparent areas in crop preview */
+        .checkerboard {
+            background-color: #1e293b;
+            background-image: 
+                linear-gradient(45deg, #334155 25%, transparent 25%), 
+                linear-gradient(-45deg, #334155 25%, transparent 25%), 
+                linear-gradient(45deg, transparent 75%, #334155 75%), 
+                linear-gradient(-45deg, transparent 75%, #334155 75%);
+            background-size: 20px 20px;
+            background-position: 0 0, 0 10px, 10px -10px, -10px 0px;
+        }
+        html:not(.dark) .checkerboard {
+            background-color: #f8fafc;
+            background-image: 
+                linear-gradient(45deg, #e2e8f0 25%, transparent 25%), 
+                linear-gradient(-45deg, #e2e8f0 25%, transparent 25%), 
+                linear-gradient(45deg, transparent 75%, #e2e8f0 75%), 
+                linear-gradient(-45deg, transparent 75%, #e2e8f0 75%);
+        }
+        .crop-canvas {
+            cursor: grab;
+            touch-action: none;
+            user-select: none;
+            -webkit-user-select: none;
+        }
+        .crop-canvas:active {
+            cursor: grabbing;
+        }
+        /* Custom Range Input Styling */
+        input[type="range"] {
+            -webkit-appearance: none;
+            appearance: none;
+            background: transparent;
+            cursor: pointer;
+        }
+        input[type="range"]::-webkit-slider-runnable-track {
+            height: 6px;
+            border-radius: 999px;
+            background: rgba(148, 163, 184, 0.3);
+        }
+        input[type="range"]::-webkit-slider-thumb {
+            -webkit-appearance: none;
+            appearance: none;
+            width: 18px;
+            height: 18px;
+            border-radius: 50%;
+            background: #6366f1;
+            border: 2px solid #ffffff;
+            margin-top: -6px;
+            box-shadow: 0 1px 4px rgba(0,0,0,0.3);
+            transition: transform 0.15s ease, background-color 0.15s ease;
+        }
+        input[type="range"]::-webkit-slider-thumb:hover {
+            transform: scale(1.15);
+            background: #4f46e5;
+        }
+    </style>
+</head>
+<body class="bg-slate-50 text-slate-900 dark:bg-slate-950 dark:text-slate-100 min-h-screen transition-colors duration-200">
+
+    <!-- Toast Notification Container -->
+    <div id="toastContainer" class="fixed bottom-5 right-5 z-50 flex flex-col gap-2 max-w-sm w-full pointer-events-none"></div>
+
+    <!-- Top Navigation Bar -->
+    <header class="sticky top-0 z-40 backdrop-blur-md bg-white/85 dark:bg-slate-900/85 border-b border-slate-200 dark:border-slate-800">
+        <div class="max-w-[1600px] mx-auto px-4 sm:px-6 py-3 flex flex-wrap items-center justify-between gap-4">
+            <div class="flex items-center gap-3">
+                <div class="w-10 h-10 rounded-xl bg-gradient-to-br from-brand-500 to-purple-600 flex items-center justify-center text-white shadow-md shadow-brand-500/20">
+                    <svg class="w-6 h-6" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                        <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M7 16V4m0 0L3 8m4-4l4 4m6 0v12m0 0l4-4m-4 4l-4-4M4 14h16" />
+                    </svg>
+                </div>
+                <div>
+                    <h1 class="text-lg font-bold tracking-tight flex items-center gap-2">
+                        PikselKırp
+                        <span class="text-xs font-medium px-2 py-0.5 rounded-full bg-brand-100 text-brand-700 dark:bg-brand-500/20 dark:text-brand-400">Çoklu Boyut & WebP/JPG</span>
+                    </h1>
+                    <p class="text-xs text-slate-500 dark:text-slate-400">Canlı 1:1 önizleme, sürükle-yakınlaştır ve tam çözünürlüklü çıktı</p>
+                </div>
+            </div>
+
+            <!-- Global Action Bar in Header -->
+            <div class="flex items-center gap-3 flex-wrap">
+                <button id="downloadAllBtn" onclick="downloadAllCrops()" disabled class="inline-flex items-center gap-2 px-4 py-2 rounded-xl bg-emerald-600 hover:bg-emerald-500 disabled:opacity-40 disabled:pointer-events-none text-white font-semibold text-sm shadow-sm transition-all active:scale-95">
+                    <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                        <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M4 16v1a3 3 0 003 3h10a3 3 0 003-3v-1m-4-4l-4 4m0 0l-4-4m4 4V4"/>
+                    </svg>
+                    <span>Tümünü İndir (<span id="totalCropCountBadge">0</span>)</span>
+                </button>
+
+                <button id="themeToggleBtn" onclick="toggleTheme()" class="p-2.5 rounded-xl border border-slate-200 dark:border-slate-700 bg-slate-100 dark:bg-slate-800 hover:bg-slate-200 dark:hover:bg-slate-700 text-slate-700 dark:text-slate-300 transition-colors" title="Tema Değiştir">
+                    <svg id="sunIcon" class="w-5 h-5 hidden dark:block text-amber-400" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                        <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 3v1m0 16v1m9-9h-1M4 12H3m15.364 6.364l-.707-.707M6.343 6.343l-.707-.707m12.728 0l-.707.707M6.343 17.657l-.707.707M16 12a4 4 0 11-8 0 4 4 0 018 0z"/>
+                    </svg>
+                    <svg id="moonIcon" class="w-5 h-5 block dark:hidden text-slate-700" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                        <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M20.354 15.354A9 9 0 018.646 3.646 9.003 9.003 0 0012 21a9.003 9.003 0 008.354-5.646z"/>
+                    </svg>
+                </button>
+            </div>
+        </div>
+    </header>
+
+    <main class="max-w-[1600px] mx-auto px-4 sm:px-6 py-6 space-y-6">
+        
+        <!-- Top Control Grid: 1. File Upload, 2. Format & Filename, 3. Add Crop Size -->
+        <section class="grid grid-cols-1 lg:grid-cols-12 gap-5">
+            
+            <!-- 1. Dosya Yükleme Alanı (4 cols) -->
+            <div class="lg:col-span-4 bg-white dark:bg-slate-900 rounded-2xl border border-slate-200 dark:border-slate-800 p-4 shadow-sm flex flex-col justify-between">
+                <div class="flex items-center justify-between mb-3">
+                    <h2 class="text-sm font-semibold uppercase tracking-wider text-slate-500 dark:text-slate-400 flex items-center gap-2">
+                        <span class="w-5 h-5 rounded-full bg-brand-500 text-white text-xs flex items-center justify-center font-bold">1</span>
+                        Kaynak Görsel Yükle
+                    </h2>
+                    <span id="sourceDimensionsBadge" class="text-xs font-mono px-2 py-0.5 rounded bg-slate-100 dark:bg-slate-800 text-slate-500 dark:text-slate-400">
+                        Görsel Yok
+                    </span>
+                </div>
+
+                <!-- Dropzone -->
+                <div id="dropZone" onclick="document.getElementById('fileInput').click()" class="relative group cursor-pointer border-2 border-dashed border-slate-300 dark:border-slate-700 hover:border-brand-500 dark:hover:border-brand-400 rounded-xl p-4 transition-all bg-slate-50/70 dark:bg-slate-800/40 hover:bg-brand-50/30 dark:hover:bg-brand-950/20 flex items-center gap-4">
+                    <input type="file" id="fileInput" accept="image/*" class="hidden" onchange="handleFileSelect(event)">
+                    
+                    <div class="w-16 h-16 rounded-lg overflow-hidden bg-slate-200/70 dark:bg-slate-800 shrink-0 border border-slate-300 dark:border-slate-700 relative flex items-center justify-center">
+                        <svg id="sourcePlaceholderIcon" class="w-7 h-7 text-slate-400 dark:text-slate-500 group-hover:text-brand-500 transition-colors" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="1.8" d="M4 16l4.586-4.586a2 2 0 012.828 0L16 16m-2-2l1.586-1.586a2 2 0 012.828 0L20 14m-6-6h.01M6 20h12a2 2 0 002-2V6a2 2 0 00-2-2H6a2 2 0 00-2 2v12a2 2 0 002 2z"/>
+                        </svg>
+                        <img id="sourceThumbnail" src="" alt="Önizleme" class="w-full h-full object-cover hidden">
+                    </div>
+
+                    <div class="min-w-0 flex-1">
+                        <p class="text-sm font-semibold text-slate-800 dark:text-slate-100 group-hover:text-brand-600 dark:group-hover:text-brand-400 transition-colors truncate" id="uploadedFileNameDisplay">
+                            Dosya Seçin veya Sürükleyin
+                        </p>
+                        <p class="text-xs text-slate-500 dark:text-slate-400 mt-0.5">
+                            Bilgisayarınızdan görsel yüklemek için <span class="underline text-brand-500 font-medium">tıklayın</span>
+                        </p>
+                        <p class="text-[11px] text-slate-400 dark:text-slate-500 mt-1">
+                            JPG, PNG, WebP, AVIF, SVG desteklenir
+                        </p>
+                    </div>
+                </div>
+            </div>
+
+            <!-- 2. Kayıt Formatı ve Dosya İsmi Ayarları (4 cols) -->
+            <div class="lg:col-span-4 bg-white dark:bg-slate-900 rounded-2xl border border-slate-200 dark:border-slate-800 p-4 shadow-sm flex flex-col justify-between space-y-3">
+                <div class="flex items-center justify-between">
+                    <h2 class="text-sm font-semibold uppercase tracking-wider text-slate-500 dark:text-slate-400 flex items-center gap-2">
+                        <span class="w-5 h-5 rounded-full bg-brand-500 text-white text-xs flex items-center justify-center font-bold">2</span>
+                        Format & Dosya Adı
+                    </h2>
+                    <span class="text-xs text-slate-400 font-mono" id="sampleOutputNamePreview">Dosyaismi-Ölçü.webp</span>
+                </div>
+
+                <div class="grid grid-cols-1 sm:grid-cols-2 gap-3">
+                    <!-- Dosya Adı Öneki -->
+                    <div>
+                        <label for="baseFileNameInput" class="block text-xs font-medium text-slate-600 dark:text-slate-400 mb-1">
+                            Dosya İsmi (Uzantısız)
+                        </label>
+                        <input type="text" id="baseFileNameInput" value="" oninput="handleBaseNameChange(this.value)" placeholder="Yüklenince otomatik gelir" class="w-full px-3 py-2 text-sm rounded-xl border border-slate-300 dark:border-slate-700 bg-slate-50 dark:bg-slate-800 text-slate-900 dark:text-slate-100 focus:outline-none focus:ring-2 focus:ring-brand-500 font-mono">
+                    </div>
+
+                    <!-- Format Seçici -->
+                    <div>
+                        <label class="block text-xs font-medium text-slate-600 dark:text-slate-400 mb-1">
+                            Kayıt Formatı
+                        </label>
+                        <div class="grid grid-cols-2 gap-1.5 p-1 bg-slate-100 dark:bg-slate-800 rounded-xl border border-slate-200 dark:border-slate-700">
+                            <button type="button" id="fmtWebpBtn" onclick="setGlobalFormat('webp')" class="py-1.5 px-2.5 rounded-lg text-xs font-bold transition-all bg-brand-600 text-white shadow-sm">
+                                .WEBP
+                            </button>
+                            <button type="button" id="fmtJpgBtn" onclick="setGlobalFormat('jpg')" class="py-1.5 px-2.5 rounded-lg text-xs font-bold transition-all text-slate-600 dark:text-slate-300 hover:bg-slate-200/60 dark:hover:bg-slate-700/60">
+                                .JPG
+                            </button>
+                        </div>
+                    </div>
+                </div>
+
+                <!-- Kalite Slider -->
+                <div class="pt-1">
+                    <div class="flex justify-between items-center text-xs mb-1">
+                        <span class="font-medium text-slate-600 dark:text-slate-400">Çıktı Kalitesi (Sıkıştırma)</span>
+                        <span id="qualityValueLabel" class="font-mono font-semibold text-brand-600 dark:text-brand-400">%90</span>
+                    </div>
+                    <input type="range" id="qualitySlider" min="10" max="100" value="90" step="1" oninput="handleQualityChange(this.value)" class="w-full">
+                </div>
+            </div>
+
+            <!-- 3. Yeni Boyut Ekleme Alanı (4 cols) -->
+            <div class="lg:col-span-4 bg-white dark:bg-slate-900 rounded-2xl border border-slate-200 dark:border-slate-800 p-4 shadow-sm flex flex-col justify-between space-y-3">
+                <div class="flex items-center justify-between gap-2 flex-wrap">
+                    <h2 class="text-sm font-semibold uppercase tracking-wider text-slate-500 dark:text-slate-400 flex items-center gap-2">
+                        <span class="w-5 h-5 rounded-full bg-brand-500 text-white text-xs flex items-center justify-center font-bold">3</span>
+                        Boyut Seç / Ekle
+                    </h2>
+                    <div class="flex items-center gap-2">
+                        <span class="inline-flex items-center gap-1 text-[11px] font-medium px-2 py-0.5 rounded-full bg-emerald-50 text-emerald-700 dark:bg-emerald-950/50 dark:text-emerald-300 border border-emerald-200/70 dark:border-emerald-800/60" title="Eklediğiniz ölçüler tarayıcı hafızasına kaydedilir ve sayfayı tekrar açtığınızda otomatik yüklenir">
+                            <svg class="w-3 h-3 text-emerald-500 shrink-0" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                                <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M5 13l4 4L19 7"/>
+                            </svg>
+                            Son boyutlar otomatik hatırlanır
+                        </span>
+                    </div>
+                </div>
+
+                <form onsubmit="handleAddSizeForm(event)" class="flex items-end gap-2">
+                    <div class="flex-1">
+                        <label for="newWidthInput" class="block text-xs font-medium text-slate-600 dark:text-slate-400 mb-1">Genişlik (px)</label>
+                        <input type="number" id="newWidthInput" min="16" max="8000" placeholder="Örn: 1254" required oninput="savePreferencesToStorage()" class="w-full px-3 py-2 text-sm font-mono rounded-xl border border-slate-300 dark:border-slate-700 bg-slate-50 dark:bg-slate-800 text-slate-900 dark:text-slate-100 focus:outline-none focus:ring-2 focus:ring-brand-500">
+                    </div>
+                    <div class="pb-2 text-slate-400 font-bold select-none">×</div>
+                    <div class="flex-1">
+                        <label for="newHeightInput" class="block text-xs font-medium text-slate-600 dark:text-slate-400 mb-1">Yükseklik (px)</label>
+                        <input type="number" id="newHeightInput" min="16" max="8000" placeholder="Örn: 548" required oninput="savePreferencesToStorage()" class="w-full px-3 py-2 text-sm font-mono rounded-xl border border-slate-300 dark:border-slate-700 bg-slate-50 dark:bg-slate-800 text-slate-900 dark:text-slate-100 focus:outline-none focus:ring-2 focus:ring-brand-500">
+                    </div>
+                    <button type="submit" class="px-4 py-2 rounded-xl bg-brand-600 hover:bg-brand-500 text-white font-semibold text-sm shadow-sm transition-all active:scale-95 shrink-0 flex items-center gap-1.5">
+                        <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 4v16m8-8H4"/>
+                        </svg>
+                        <span>Boyut Ekle</span>
+                    </button>
+                </form>
+
+                <!-- Hızlı Hazır Ölçüler ve Tüm Boyutları Temizle -->
+                <div>
+                    <div class="flex items-center justify-between mb-1.5">
+                        <span class="block text-[11px] text-slate-400 dark:text-slate-500">Hızlı Boyut Seç:</span>
+                        <button type="button" id="clearAllSizesBtn" onclick="clearAllCropSizes()" class="hidden text-[11px] font-medium text-rose-500 hover:text-rose-600 dark:text-rose-400 dark:hover:text-rose-300 hover:underline flex items-center gap-1 transition-colors">
+                            <svg class="w-3 h-3" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                                <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M19 7l-.867 12.142A2 2 0 0116.138 21H7.862a2 2 0 01-1.995-1.858L5 7m5 4v6m4-6v6m1-10V4a1 1 0 00-1-1h-4a1 1 0 00-1 1v3M4 7h16"/>
+                            </svg>
+                            Tüm Boyutları Temizle
+                        </button>
+                    </div>
+                    <div class="flex flex-wrap gap-1.5">
+                        <button type="button" onclick="quickAddSize(1920, 1080)" class="text-xs font-mono px-2 py-1 rounded-lg bg-slate-100 hover:bg-brand-50 dark:bg-slate-800 dark:hover:bg-brand-950/50 text-slate-700 dark:text-slate-300 border border-slate-200 dark:border-slate-700 transition-colors">
+                            + 1920×1080
+                        </button>
+                        <button type="button" onclick="quickAddSize(1254, 548)" class="text-xs font-mono px-2 py-1 rounded-lg bg-slate-100 hover:bg-brand-50 dark:bg-slate-800 dark:hover:bg-brand-950/50 text-slate-700 dark:text-slate-300 border border-slate-200 dark:border-slate-700 transition-colors">
+                            + 1254×548
+                        </button>
+                        <button type="button" onclick="quickAddSize(800, 600)" class="text-xs font-mono px-2 py-1 rounded-lg bg-slate-100 hover:bg-brand-50 dark:bg-slate-800 dark:hover:bg-brand-950/50 text-slate-700 dark:text-slate-300 border border-slate-200 dark:border-slate-700 transition-colors">
+                            + 800×600
+                        </button>
+                        <button type="button" onclick="quickAddSize(600, 600)" class="text-xs font-mono px-2 py-1 rounded-lg bg-slate-100 hover:bg-brand-50 dark:bg-slate-800 dark:hover:bg-brand-950/50 text-slate-700 dark:text-slate-300 border border-slate-200 dark:border-slate-700 transition-colors">
+                            + 600×600
+                        </button>
+                    </div>
+                </div>
+            </div>
+        </section>
+
+        <!-- Bilgi Çubuğu (Sadece kırpma alanı aktifken görünür) -->
+        <div id="workspaceHintBar" class="hidden bg-brand-50/80 dark:bg-brand-950/30 border border-brand-200/70 dark:border-brand-800/50 rounded-xl px-4 py-2.5 flex flex-wrap items-center justify-between gap-2 text-xs text-slate-700 dark:text-slate-300">
+            <div class="flex items-center gap-2">
+                <svg class="w-4 h-4 text-brand-500 shrink-0" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                    <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M13 16h-1v-4h-1m1-4h.01M21 12a9 9 0 11-18 0 9 9 0 0118 0z"/>
+                </svg>
+                <span>
+                    <strong>İpucu:</strong> Her ölçünün içindeki görseli <strong>fareyle sürükleyerek</strong> kaydırabilir, <strong>fare tekerleği</strong> veya sağdaki çubukla yakınlaştırıp uzaklaştırabilirsiniz. 1000 piksel üzerindeki ölçüler ekrana orantılı sığdırılır ancak <strong>indirirken tam piksel ölçüsünde</strong> kaydedilir.
+                </span>
+            </div>
+            <div class="flex items-center gap-3">
+                <label class="inline-flex items-center gap-1.5 cursor-pointer select-none">
+                    <input type="checkbox" id="showGridCheckbox" checked onchange="toggleGridOverlay(this.checked)" class="rounded text-brand-600 focus:ring-brand-500">
+                    <span>Kılavuz Çizgileri (Sürüklerken)</span>
+                </label>
+            </div>
+        </div>
+
+        <!-- Başlangıç Boş Durum Ekranı (Görsel yüklenmediğinde veya henüz boyut eklenmediğinde gösterilir) -->
+        <section id="emptyStateSection" class="bg-white dark:bg-slate-900 rounded-2xl border-2 border-dashed border-slate-200 dark:border-slate-800 p-8 sm:p-12 text-center max-w-3xl mx-auto my-6">
+            <div class="w-16 h-16 rounded-2xl bg-brand-50 dark:bg-brand-950/60 text-brand-600 dark:text-brand-400 flex items-center justify-center mx-auto mb-4 shadow-sm border border-brand-100 dark:border-brand-900">
+                <svg class="w-8 h-8" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                    <path stroke-linecap="round" stroke-linejoin="round" stroke-width="1.8" d="M4 16l4.586-4.586a2 2 0 012.828 0L16 16m-2-2l1.586-1.586a2 2 0 012.828 0L20 14m-6-6h.01M6 20h12a2 2 0 002-2V6a2 2 0 00-2-2H6a2 2 0 00-2 2v12a2 2 0 002 2z"/>
+                </svg>
+            </div>
+
+            <h3 id="emptyStateTitle" class="text-lg font-bold text-slate-800 dark:text-slate-100">
+                Başlamak İçin Görsel Yükleyin ve Boyut Seçin
+            </h3>
+            <p id="emptyStateSubtitle" class="text-sm text-slate-500 dark:text-slate-400 mt-1 max-w-xl mx-auto">
+                Bilgisayarınızdan bir görsel seçin ve kırpmak istediğiniz piksel ölçülerini (Genişlik × Yükseklik) ekleyin.
+            </p>
+
+            <!-- Adım Durum Kartları -->
+            <div class="grid grid-cols-1 sm:grid-cols-2 gap-4 mt-6 text-left">
+                <!-- Adım 1 Durumu -->
+                <div id="stepCardImage" onclick="document.getElementById('fileInput').click()" class="cursor-pointer p-4 rounded-xl border border-slate-200 dark:border-slate-800 bg-slate-50/70 dark:bg-slate-800/40 hover:border-brand-500 dark:hover:border-brand-400 transition-all flex items-center gap-3.5">
+                    <div id="stepIconImage" class="w-10 h-10 rounded-xl bg-slate-200 dark:bg-slate-700 text-slate-600 dark:text-slate-300 flex items-center justify-center font-bold text-sm shrink-0">
+                        1
+                    </div>
+                    <div class="min-w-0 flex-1">
+                        <p class="text-xs font-semibold uppercase tracking-wider text-slate-400 dark:text-slate-500">1. Adım</p>
+                        <p id="stepTextImage" class="text-sm font-semibold text-slate-800 dark:text-slate-100 truncate">Dosya Ekle (Tıkla veya Sürükle)</p>
+                    </div>
+                </div>
+
+                <!-- Adım 2 Durumu -->
+                <div id="stepCardSize" onclick="document.getElementById('newWidthInput').focus()" class="cursor-pointer p-4 rounded-xl border border-slate-200 dark:border-slate-800 bg-slate-50/70 dark:bg-slate-800/40 hover:border-brand-500 dark:hover:border-brand-400 transition-all flex items-center gap-3.5">
+                    <div id="stepIconSize" class="w-10 h-10 rounded-xl bg-slate-200 dark:bg-slate-700 text-slate-600 dark:text-slate-300 flex items-center justify-center font-bold text-sm shrink-0">
+                        2
+                    </div>
+                    <div class="min-w-0 flex-1">
+                        <p class="text-xs font-semibold uppercase tracking-wider text-slate-400 dark:text-slate-500">2. Adım</p>
+                        <p id="stepTextSize" class="text-sm font-semibold text-slate-800 dark:text-slate-100 truncate">Boyut Seç / Ölçü Ekle</p>
+                    </div>
+                </div>
+            </div>
+
+            <!-- Görsel yüklenmeden önce eklenen boyutların listesi -->
+            <div id="pendingSizesContainer" class="hidden mt-6 pt-5 border-t border-slate-200 dark:border-slate-800">
+                <div class="flex items-center justify-center gap-3 mb-2.5 flex-wrap">
+                    <p class="text-xs font-medium text-slate-500 dark:text-slate-400">Hatırlanan / Seçilen Ölçüler (Görsel yüklendiğinde canlı açılacak):</p>
+                    <button type="button" onclick="clearAllCropSizes()" class="text-xs font-medium text-rose-500 hover:text-rose-600 dark:text-rose-400 hover:underline">
+                        Tüm Boyutları Temizle
+                    </button>
+                </div>
+                <div id="pendingSizesList" class="flex flex-wrap items-center justify-center gap-2"></div>
+            </div>
+        </section>
+
+        <!-- Canlı Kırpma Alanları Listesi -->
+        <section id="cropsListContainer" class="space-y-8 pb-16">
+            <!-- Dinamik Kırpma Kartları Buraya Eklenecek -->
+        </section>
+
+    </main>
+
+    <script>
+        const STORAGE_KEY = 'pikselkirp_saved_prefs_v1';
+
+        /**
+         * Uygulama Durumu (State) — Başlangıçta görsel boştur, boyutlar localStorage'dan geri yüklenir.
+         */
+        const state = {
+            sourceImage: null,          // HTMLImageElement (Kullanıcı yükleyene kadar null)
+            sourceWidth: 0,
+            sourceHeight: 0,
+            baseFileName: 'gorsel',
+            globalFormat: 'webp',       // 'webp' | 'jpg'
+            globalQuality: 0.90,        // 0.10 - 1.00
+            showGridOnDrag: true,
+            nextId: 1,
+            crops: []                   // Eklenen kırpma boyutları
+        };
+
+        // Aktif sürükleme (pan) işlemi için referans
+        let activeDrag = null;
+
+        /**
+         * Kullanıcının eklediği boyutları, son yazdığı genişlik/yükseklik değerlerini
+         * ve kayıt formatı/kalite tercihlerini localStorage'a kaydeder.
+         */
+        function savePreferencesToStorage() {
+            try {
+                const wInput = document.getElementById('newWidthInput');
+                const hInput = document.getElementById('newHeightInput');
+                const payload = {
+                    dimensions: state.crops.map(c => ({ width: c.width, height: c.height })),
+                    lastTypedWidth: wInput ? wInput.value : '',
+                    lastTypedHeight: hInput ? hInput.value : '',
+                    globalFormat: state.globalFormat,
+                    globalQuality: Math.round(state.globalQuality * 100)
+                };
+                localStorage.setItem(STORAGE_KEY, JSON.stringify(payload));
+            } catch (err) {
+                // Tarayıcı gizlilik modunda localStorage engellenmişse sessizce devam et
+            }
+        }
+
+        /**
+         * Sayfa açıldığında localStorage'daki son boyutları ve tercihleri okur ve geri yükler.
+         */
+        function loadPreferencesFromStorage() {
+            try {
+                const raw = localStorage.getItem(STORAGE_KEY);
+                if (!raw) return;
+                const data = JSON.parse(raw);
+                if (!data || typeof data !== 'object') return;
+
+                // Son yazılan input değerlerini geri yükle
+                const wInput = document.getElementById('newWidthInput');
+                const hInput = document.getElementById('newHeightInput');
+                if (wInput && data.lastTypedWidth) wInput.value = data.lastTypedWidth;
+                if (hInput && data.lastTypedHeight) hInput.value = data.lastTypedHeight;
+
+                // Format ve kalite ayarlarını geri yükle
+                if (data.globalFormat === 'jpg' || data.globalFormat === 'webp') {
+                    setGlobalFormat(data.globalFormat, true);
+                }
+                if (typeof data.globalQuality === 'number' && data.globalQuality >= 10 && data.globalQuality <= 100) {
+                    const qSlider = document.getElementById('qualitySlider');
+                    if (qSlider) qSlider.value = data.globalQuality;
+                    handleQualityChange(data.globalQuality, true);
+                }
+
+                // Kayıtlı kırpma boyutlarını geri yükle
+                if (Array.isArray(data.dimensions) && data.dimensions.length > 0) {
+                    data.dimensions.forEach(dim => {
+                        if (dim && dim.width && dim.height) {
+                            addCropSize(dim.width, dim.height, true);
+                        }
+                    });
+                }
+            } catch (err) {
+                // Bozuk veri veya erişim hatası durumunda yoksay
+            }
+        }
+
+        /**
+         * Tüm eklenmiş boyutları temizler ve localStorage'ı günceller.
+         */
+        function clearAllCropSizes() {
+            if (state.crops.length === 0) return;
+            state.crops = [];
+            const container = document.getElementById('cropsListContainer');
+            if (container) container.innerHTML = '';
+            savePreferencesToStorage();
+            updateWorkspaceStateUI();
+            showToast('Tüm kırpma boyutları temizlendi.', 'info');
+        }
+
+        /**
+         * Verilen hedef (cropW, cropH) kutusuna kaynak görseli tam dolduracak (cover)
+         * ve ortalayacak başlangıç ölçek (scale) ve (offsetX, offsetY) değerlerini hesaplar.
+         * minScale her zaman kırpma alanını %100 dolduran coverScale değerine eşittir (boşluk oluşamaz).
+         */
+        function computeCoverTransform(cropW, cropH) {
+            if (!state.sourceImage || !state.sourceWidth || !state.sourceHeight) {
+                return {
+                    scale: 1,
+                    minScale: 1,
+                    maxScale: 4,
+                    offsetX: 0,
+                    offsetY: 0
+                };
+            }
+            const srcW = state.sourceWidth;
+            const srcH = state.sourceHeight;
+            const scaleX = cropW / srcW;
+            const scaleY = cropH / srcH;
+            const coverScale = Math.max(scaleX, scaleY);
+
+            const drawnW = srcW * coverScale;
+            const drawnH = srcH * coverScale;
+
+            return {
+                scale: coverScale,
+                minScale: coverScale,
+                maxScale: coverScale * 4,
+                offsetX: (cropW - drawnW) / 2,
+                offsetY: (cropH - drawnH) / 2
+            };
+        }
+
+        /**
+         * Yeni bir kırpma boyutu ekler
+         */
+        function addCropSize(width, height, silent = false) {
+            const w = Math.max(16, Math.min(8000, Math.round(Number(width) || 800)));
+            const h = Math.max(16, Math.min(8000, Math.round(Number(height) || 600)));
+
+            const transform = computeCoverTransform(w, h);
+            const id = state.nextId++;
+
+            const cropItem = {
+                id,
+                width: w,
+                height: h,
+                scale: transform.scale,
+                minScale: transform.minScale,
+                maxScale: transform.maxScale,
+                offsetX: transform.offsetX,
+                offsetY: transform.offsetY,
+                bgColor: '#0f172a',
+                forceActualSizeView: false, // >1000px olsa bile kullanıcı 1:1 görmek isterse
+                isDragging: false
+            };
+
+            state.crops.push(cropItem);
+
+            // Eğer görsel zaten yüklüyse doğrudan canlı kırpma kartını oluştur
+            if (state.sourceImage) {
+                renderCropCardDOM(cropItem);
+            }
+
+            if (!silent) {
+                savePreferencesToStorage();
+            }
+
+            updateWorkspaceStateUI();
+
+            if (!silent) {
+                showToast(`${w}×${h} px boyutu eklendi.`, 'success');
+            }
+        }
+
+        /**
+         * Kırpma kutusunun ekranda nasıl görüneceğini hesaplar:
+         * - İstenen boyut 1000px ve altındaysa (ve ekran genişliğine sığıyorsa) tam 1:1 (100%) piksel boyutuyla gösterilir.
+         * - Eğer genişlik veya yükseklik 1000px üzerindeyse (veya ekran dar ise) orantılı küçültülerek ekrana sığdırılır.
+         * - Kaydederken her zaman gerçek (crop.width x crop.height) çözünürlükte kaydedilir.
+         */
+        function calculateDisplayMetrics(crop, availableWidth) {
+            const maxAllowedWidth = Math.min(1000, availableWidth || 960);
+            const maxAllowedHeight = 1000;
+
+            if (crop.forceActualSizeView) {
+                return {
+                    displayWidth: crop.width,
+                    displayHeight: crop.height,
+                    displayScale: 1,
+                    isScaledDown: false,
+                    reason: '1:1'
+                };
+            }
+
+            let scale = 1;
+            let reason = '1:1';
+
+            if (crop.width > 1000 || crop.height > 1000) {
+                const scaleW = maxAllowedWidth / crop.width;
+                const scaleH = maxAllowedHeight / crop.height;
+                scale = Math.min(scaleW, scaleH, 1);
+                reason = 'over1000';
+            } else if (crop.width > maxAllowedWidth) {
+                scale = maxAllowedWidth / crop.width;
+                reason = 'viewport';
+            }
+
+            return {
+                displayWidth: Math.max(1, Math.round(crop.width * scale)),
+                displayHeight: Math.max(1, Math.round(crop.height * scale)),
+                displayScale: scale,
+                isScaledDown: scale < 0.999,
+                reason
+            };
+        }
+
+        /**
+         * Tek bir kırpma kutusunun HTML kartını oluşturur ve listeye ekler
+         */
+        function renderCropCardDOM(crop) {
+            const container = document.getElementById('cropsListContainer');
+            const card = document.createElement('div');
+            card.id = `crop-card-${crop.id}`;
+            card.className = 'bg-white dark:bg-slate-900 rounded-2xl border border-slate-200 dark:border-slate-800 shadow-sm overflow-hidden transition-all';
+
+            card.innerHTML = `
+                <!-- Üst Başlık Çubuğu -->
+                <div class="px-4 sm:px-6 py-3.5 bg-slate-50/80 dark:bg-slate-800/50 border-b border-slate-200 dark:border-slate-800 flex flex-wrap items-center justify-between gap-3">
+                    <div class="flex items-center gap-3 flex-wrap">
+                        <span class="px-2.5 py-1 rounded-lg bg-brand-600 text-white font-mono font-bold text-sm shadow-sm" id="crop-dim-title-${crop.id}">
+                            ${crop.width} × ${crop.height} px
+                        </span>
+
+                        <!-- Ölçek Durum Rozeti -->
+                        <span id="crop-scale-badge-${crop.id}" class="text-xs font-medium px-2.5 py-1 rounded-lg border"></span>
+
+                        <!-- >1000px ise 1:1 Görünüm Anahtarı -->
+                        <button type="button" id="crop-toggle-1to1-${crop.id}" onclick="toggleForceActualSize(${crop.id})" class="hidden text-xs font-medium text-brand-600 dark:text-brand-400 hover:underline">
+                            1:1 Gerçek Boyut Göster
+                        </button>
+                    </div>
+
+                    <!-- Boyut Güncelleme & Silme Butonları -->
+                    <div class="flex items-center gap-2 flex-wrap">
+                        <div class="flex items-center gap-1 bg-white dark:bg-slate-900 px-2 py-1 rounded-xl border border-slate-200 dark:border-slate-700 text-xs">
+                            <span class="text-slate-400">Ölçü:</span>
+                            <input type="number" id="edit-w-${crop.id}" value="${crop.width}" min="16" max="8000" onchange="updateCropDimensions(${crop.id})" class="w-16 font-mono font-semibold text-center bg-transparent focus:outline-none focus:text-brand-500">
+                            <span class="text-slate-400">×</span>
+                            <input type="number" id="edit-h-${crop.id}" value="${crop.height}" min="16" max="8000" onchange="updateCropDimensions(${crop.id})" class="w-16 font-mono font-semibold text-center bg-transparent focus:outline-none focus:text-brand-500">
+                            <span class="text-slate-400">px</span>
+                        </div>
+
+                        <button type="button" onclick="duplicateCrop(${crop.id})" class="p-1.5 rounded-lg text-slate-500 hover:text-slate-800 dark:hover:text-slate-200 hover:bg-slate-200/60 dark:hover:bg-slate-700/60 transition-colors" title="Bu Boyutu Çoğalt">
+                            <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                                <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M8 16H6a2 2 0 01-2-2V6a2 2 0 012-2h8a2 2 0 012 2v2m-6 12h8a2 2 0 002-2v-8a2 2 0 00-2-2h-8a2 2 0 00-2 2v8a2 2 0 002 2z"/>
+                            </svg>
+                        </button>
+
+                        <button type="button" onclick="removeCrop(${crop.id})" class="p-1.5 rounded-lg text-rose-500 hover:text-rose-600 hover:bg-rose-50 dark:hover:bg-rose-950/40 transition-colors" title="Bu Boyutu Kaldır">
+                            <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                                <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M19 7l-.867 12.142A2 2 0 0116.138 21H7.862a2 2 0 01-1.995-1.858L5 7m5 4v6m4-6v6m1-10V4a1 1 0 00-1-1h-4a1 1 0 00-1 1v3M4 7h16"/>
+                            </svg>
+                        </button>
+                    </div>
+                </div>
+
+                <!-- Gövde: Sol/Orta Canlı Canvas Önizleme + Sağ Kontrol ve İndir Paneli -->
+                <div class="p-4 sm:p-6 flex flex-col xl:flex-row items-start gap-6">
+                    
+                    <!-- Canlı Kırpma Canvas Alanı -->
+                    <div id="crop-viewport-wrap-${crop.id}" class="w-full xl:flex-1 overflow-auto flex items-center justify-center bg-slate-100/80 dark:bg-slate-950/70 rounded-xl p-4 border border-slate-200/80 dark:border-slate-800/80 min-h-[240px]">
+                        <div class="relative inline-block shadow-xl rounded-lg overflow-hidden ring-1 ring-slate-300 dark:ring-slate-700 checkerboard">
+                            <canvas id="crop-canvas-${crop.id}" width="${crop.width}" height="${crop.height}" class="crop-canvas block"></canvas>
+                        </div>
+                    </div>
+
+                    <!-- Sağ Yan Kontrol ve İndirme Paneli -->
+                    <div class="w-full xl:w-80 shrink-0 bg-slate-50 dark:bg-slate-800/40 rounded-xl p-4 border border-slate-200/80 dark:border-slate-800 space-y-4">
+                        
+                        <!-- Yakınlaştırma (Zoom) Kontrolü -->
+                        <div>
+                            <div class="flex items-center justify-between text-xs mb-1.5">
+                                <span class="font-semibold text-slate-700 dark:text-slate-300 flex items-center gap-1.5">
+                                    <svg class="w-4 h-4 text-brand-500" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                                        <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M21 21l-6-6m2-5a7 7 0 11-14 0 7 7 0 0114 0zM10 7v3m0 0v3m0-3h3m-3 0H7"/>
+                                    </svg>
+                                    Yakınlaştırma (Min %100 Dolu)
+                                </span>
+                                <span id="crop-zoom-label-${crop.id}" class="font-mono font-semibold text-brand-600 dark:text-brand-400">%100</span>
+                            </div>
+                            <div class="flex items-center gap-2">
+                                <button type="button" onclick="stepZoom(${crop.id}, -0.1)" class="w-8 h-8 rounded-lg bg-white dark:bg-slate-800 border border-slate-200 dark:border-slate-700 hover:bg-slate-100 dark:hover:bg-slate-700 flex items-center justify-center font-bold text-sm transition-colors" title="Küçült">−</button>
+                                <input type="range" id="crop-zoom-slider-${crop.id}" min="100" max="400" value="100" step="1" oninput="handleZoomSlider(${crop.id}, this.value)" class="flex-1">
+                                <button type="button" onclick="stepZoom(${crop.id}, 0.1)" class="w-8 h-8 rounded-lg bg-white dark:bg-slate-800 border border-slate-200 dark:border-slate-700 hover:bg-slate-100 dark:hover:bg-slate-700 flex items-center justify-center font-bold text-sm transition-colors" title="Büyüt">+</button>
+                            </div>
+                        </div>
+
+                        <!-- Hizalama ve Sıfırlama Araçları -->
+                        <div class="grid grid-cols-2 gap-2">
+                            <button type="button" onclick="resetCropToCover(${crop.id})" class="px-3 py-2 rounded-lg text-xs font-medium bg-white dark:bg-slate-800 border border-slate-200 dark:border-slate-700 hover:border-brand-500 dark:hover:border-brand-400 text-slate-700 dark:text-slate-200 transition-colors flex items-center justify-center gap-1.5" title="Minimum tam doldurma ölçeğine dön ve ortala">
+                                <svg class="w-3.5 h-3.5 text-brand-500" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                                    <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M4 8V4m0 0h4M4 4l5 5m11-1V4m0 0h-4m4 0l-5 5M4 16v4m0 0h4m-4 0l5-5m11 5l-5-5m5 5v-4m0 4h-4"/>
+                                </svg>
+                                <span>Sıfırla (%100)</span>
+                            </button>
+                            <button type="button" onclick="centerCropImage(${crop.id})" class="px-3 py-2 rounded-lg text-xs font-medium bg-white dark:bg-slate-800 border border-slate-200 dark:border-slate-700 hover:border-brand-500 dark:hover:border-brand-400 text-slate-700 dark:text-slate-200 transition-colors flex items-center justify-center gap-1.5" title="Mevcut yakınlaştırma oranını koruyarak görseli merkeze hizala">
+                                <svg class="w-3.5 h-3.5 text-purple-500" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                                    <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 9V4.5M9 9H4.5M9 9L3.75 3.75M9 15v4.5M9 15H4.5M9 15l-5.25 5.25M15 9h4.5M15 9V4.5M15 9l5.25-5.25M15 15h4.5M15 15v4.5m0-4.5l5.25 5.25"/>
+                                </svg>
+                                <span>Merkeze Hizala</span>
+                            </button>
+                        </div>
+
+                        <!-- Konum ve Kenar Kilit Bilgisi -->
+                        <div class="pt-2 border-t border-slate-200 dark:border-slate-700/70 flex items-center justify-between text-xs text-slate-500 dark:text-slate-400">
+                            <span id="crop-pos-info-${crop.id}" class="font-mono text-[11px]">X: 0, Y: 0</span>
+                            <span class="inline-flex items-center gap-1 text-[11px] text-emerald-600 dark:text-emerald-400 font-medium">
+                                <svg class="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                                    <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 12l2 2 4-4m5.618-4.016A11.955 11.955 0 0112 2.944a11.955 11.955 0 01-8.618 3.04A12.02 12.02 0 003 9c0 5.591 3.824 10.29 9 11.622 5.176-1.332 9-6.03 9-11.622 0-1.042-.133-2.052-.382-3.016z"/>
+                                </svg>
+                                Boşluksuz Kenar Kilidi
+                            </span>
+                        </div>
+
+                        <!-- İndirme Bölümü -->
+                        <div class="pt-3 border-t border-slate-200 dark:border-slate-700/70 space-y-2">
+                            <div class="flex items-center justify-between text-[11px] text-slate-500 dark:text-slate-400">
+                                <span>Kaydedilecek Dosya:</span>
+                                <span class="font-mono font-semibold text-emerald-600 dark:text-emerald-400" id="crop-outsize-info-${crop.id}">${crop.width}×${crop.height} px (Tam Boyut)</span>
+                            </div>
+                            <div class="px-3 py-2 rounded-lg bg-slate-100 dark:bg-slate-900 border border-slate-200 dark:border-slate-800 font-mono text-xs text-slate-700 dark:text-slate-300 truncate" id="crop-filename-preview-${crop.id}">
+                                ${getTargetFileName(crop)}
+                            </div>
+
+                            <button type="button" onclick="downloadSingleCrop(${crop.id})" class="w-full py-3 px-4 rounded-xl bg-gradient-to-r from-brand-600 to-indigo-600 hover:from-brand-500 hover:to-indigo-500 text-white font-semibold text-sm shadow-md shadow-brand-500/20 flex items-center justify-center gap-2 transition-all active:scale-[0.98]">
+                                <svg class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                                    <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M4 16v1a3 3 0 003 3h10a3 3 0 003-3v-1m-4-4l-4 4m0 0l-4-4m4 4V4"/>
+                                </svg>
+                                <span id="crop-download-btn-text-${crop.id}">İndir (${getTargetFileName(crop)})</span>
+                            </button>
+                        </div>
+                    </div>
+                </div>
+            `;
+
+            container.appendChild(card);
+
+            // Canvas etkileşim dinleyicilerini bağla
+            attachCanvasListeners(crop);
+
+            // İlk çizimi yap
+            syncZoomSliderUI(crop);
+            drawCropCanvas(crop);
+        }
+
+        /**
+         * Görselin kırpma alanı içinde hiçbir kenardan (sol, sağ, üst, alt) boşluk bırakmamasını
+         * ve minimum doldurma ölçeğinin (minScale) altına inmemesini garanti altına alır.
+         */
+        function clampCropTransform(crop) {
+            if (!state.sourceImage || !state.sourceWidth || !state.sourceHeight) return;
+
+            const srcW = state.sourceWidth;
+            const srcH = state.sourceHeight;
+
+            // 1. Minimum ölçek: Kırpma kutusunu tamamen kaplayan Cover ölçeği
+            const coverScale = Math.max(crop.width / srcW, crop.height / srcH);
+            crop.minScale = coverScale;
+            crop.maxScale = coverScale * 4;
+
+            if (crop.scale < crop.minScale) crop.scale = crop.minScale;
+            if (crop.scale > crop.maxScale) crop.scale = crop.maxScale;
+
+            // 2. Çizilen görselin kırpma uzayındaki güncel genişlik ve yüksekliği
+            const scaledW = srcW * crop.scale;
+            const scaledH = srcH * crop.scale;
+
+            // 3. Sol (offsetX <= 0) ve Sağ (offsetX >= crop.width - scaledW) sınır kilidi
+            const minOffsetX = crop.width - scaledW;
+            crop.offsetX = Math.min(0, Math.max(minOffsetX, crop.offsetX));
+
+            // 4. Üst (offsetY <= 0) ve Alt (offsetY >= crop.height - scaledH) sınır kilidi
+            const minOffsetY = crop.height - scaledH;
+            crop.offsetY = Math.min(0, Math.max(minOffsetY, crop.offsetY));
+        }
+
+        /**
+         * Yeni bir kırpma boyutu ekler
+         */
+        function attachCanvasListeners(crop) {
+            const canvas = document.getElementById(`crop-canvas-${crop.id}`);
+            if (!canvas) return;
+
+            // Fareyle Sürükleme Başlangıcı
+            canvas.addEventListener('mousedown', (e) => {
+                if (e.button !== 0) return;
+                e.preventDefault();
+                const rect = canvas.getBoundingClientRect();
+                const displayScale = rect.width / crop.width;
+                crop.isDragging = true;
+                activeDrag = {
+                    crop,
+                    startX: e.clientX,
+                    startY: e.clientY,
+                    initialOffsetX: crop.offsetX,
+                    initialOffsetY: crop.offsetY,
+                    displayScale
+                };
+                drawCropCanvas(crop);
+            });
+
+            // Dokunmatik (Touch) Sürükleme Başlangıcı
+            canvas.addEventListener('touchstart', (e) => {
+                if (e.touches.length === 1) {
+                    e.preventDefault();
+                    const touch = e.touches[0];
+                    const rect = canvas.getBoundingClientRect();
+                    const displayScale = rect.width / crop.width;
+                    crop.isDragging = true;
+                    activeDrag = {
+                        crop,
+                        startX: touch.clientX,
+                        startY: touch.clientY,
+                        initialOffsetX: crop.offsetX,
+                        initialOffsetY: crop.offsetY,
+                        displayScale
+                    };
+                    drawCropCanvas(crop);
+                }
+            }, { passive: false });
+
+            // Fare Tekerleği ile İmleç Noktasına Doğru Yakınlaştırma / Uzaklaştırma
+            canvas.addEventListener('wheel', (e) => {
+                e.preventDefault();
+                const rect = canvas.getBoundingClientRect();
+                const displayScale = rect.width / crop.width;
+
+                // Fare imlecinin gerçek canvas pikseli cinsinden koordinatı
+                const mouseCanvasX = (e.clientX - rect.left) / displayScale;
+                const mouseCanvasY = (e.clientY - rect.top) / displayScale;
+
+                const zoomFactor = e.deltaY < 0 ? 1.08 : 0.92;
+                const newScale = Math.max(crop.minScale, Math.min(crop.maxScale, crop.scale * zoomFactor));
+
+                // İmlecin altındaki görsel noktasını sabit tutarak yeni offset hesapla
+                const imagePointX = (mouseCanvasX - crop.offsetX) / crop.scale;
+                const imagePointY = (mouseCanvasY - crop.offsetY) / crop.scale;
+
+                crop.scale = newScale;
+                crop.offsetX = mouseCanvasX - imagePointX * newScale;
+                crop.offsetY = mouseCanvasY - imagePointY * newScale;
+
+                // Uzaklaştırırken veya yakınlaştırırken kenarda boşluk kalmasını engelle
+                clampCropTransform(crop);
+                syncZoomSliderUI(crop);
+                drawCropCanvas(crop);
+            }, { passive: false });
+        }
+
+        // Global Fare ve Dokunmatik Hareket Dinleyicileri
+        window.addEventListener('mousemove', (e) => {
+            if (!activeDrag) return;
+            const { crop, startX, startY, initialOffsetX, initialOffsetY, displayScale } = activeDrag;
+            const dx = (e.clientX - startX) / displayScale;
+            const dy = (e.clientY - startY) / displayScale;
+
+            crop.offsetX = initialOffsetX + dx;
+            crop.offsetY = initialOffsetY + dy;
+            clampCropTransform(crop);
+            drawCropCanvas(crop);
+        });
+
+        window.addEventListener('touchmove', (e) => {
+            if (!activeDrag || e.touches.length !== 1) return;
+            e.preventDefault();
+            const touch = e.touches[0];
+            const { crop, startX, startY, initialOffsetX, initialOffsetY, displayScale } = activeDrag;
+            const dx = (touch.clientX - startX) / displayScale;
+            const dy = (touch.clientY - startY) / displayScale;
+
+            crop.offsetX = initialOffsetX + dx;
+            crop.offsetY = initialOffsetY + dy;
+            clampCropTransform(crop);
+            drawCropCanvas(crop);
+        }, { passive: false });
+
+        function endActiveDrag() {
+            if (!activeDrag) return;
+            const c = activeDrag.crop;
+            c.isDragging = false;
+            activeDrag = null;
+            drawCropCanvas(c);
+        }
+
+        window.addEventListener('mouseup', endActiveDrag);
+        window.addEventListener('touchend', endActiveDrag);
+
+        /**
+         * Kırpma kutusunu hem tam çözünürlüklü iç piksel boyutunda çizer
+         * hem de >1000px kuralına göre ekran görünüm boyutunu günceller.
+         * @param {Object} crop - Kırpma nesnesi
+         * @param {Boolean} forExport - İndirme için mi çiziliyor? (True ise kılavuz çizgileri gizlenir)
+         */
+        function drawCropCanvas(crop, forExport = false) {
+            const canvas = document.getElementById(`crop-canvas-${crop.id}`);
+            if (!canvas || !state.sourceImage) return;
+
+            // Çizim öncesi her zaman sınırları ve minimum ölçeği doğrula
+            clampCropTransform(crop);
+
+            if (canvas.width !== crop.width) canvas.width = crop.width;
+            if (canvas.height !== crop.height) canvas.height = crop.height;
+
+            const ctx = canvas.getContext('2d');
+            ctx.save();
+
+            // Arka plan temizliği
+            ctx.clearRect(0, 0, crop.width, crop.height);
+
+            // Yüksek kaliteli yeniden boyutlandırma
+            ctx.imageSmoothingEnabled = true;
+            ctx.imageSmoothingQuality = 'high';
+
+            const drawnW = state.sourceWidth * crop.scale;
+            const drawnH = state.sourceHeight * crop.scale;
+
+            ctx.drawImage(
+                state.sourceImage,
+                crop.offsetX,
+                crop.offsetY,
+                drawnW,
+                drawnH
+            );
+
+            // Eğer kullanıcı şu an sürüklüyorsa ve kılavuz çizgileri açıksa (ve çıktı alınmıyorsa) 3x3 ızgara çiz
+            if (!forExport && crop.isDragging && state.showGridOnDrag) {
+                ctx.strokeStyle = 'rgba(255, 255, 255, 0.55)';
+                ctx.lineWidth = Math.max(1, Math.round(Math.max(crop.width, crop.height) / 500));
+
+                // Üçler kuralı çizgileri
+                ctx.beginPath();
+                ctx.moveTo(crop.width / 3, 0);
+                ctx.lineTo(crop.width / 3, crop.height);
+                ctx.moveTo((crop.width * 2) / 3, 0);
+                ctx.lineTo((crop.width * 2) / 3, crop.height);
+                ctx.moveTo(0, crop.height / 3);
+                ctx.lineTo(crop.width, crop.height / 3);
+                ctx.moveTo(0, (crop.height * 2) / 3);
+                ctx.lineTo(crop.width, (crop.height * 2) / 3);
+                ctx.stroke();
+
+                // Merkez artı işareti
+                const cx = crop.width / 2;
+                const cy = crop.height / 2;
+                ctx.strokeStyle = 'rgba(99, 102, 241, 0.85)';
+                ctx.beginPath();
+                ctx.moveTo(cx - 15, cy);
+                ctx.lineTo(cx + 15, cy);
+                ctx.moveTo(cx, cy - 15);
+                ctx.lineTo(cx, cy + 15);
+                ctx.stroke();
+            }
+
+            ctx.restore();
+
+            if (!forExport) {
+                updateCropDisplaySizingAndUI(crop);
+            }
+        }
+
+        /**
+         * Ekrandaki CSS boyutunu (>1000px ise orantılı küçültme, <=1000px ise 1:1 gösterme)
+         * ve bilgi rozetlerini günceller.
+         */
+        function updateCropDisplaySizingAndUI(crop) {
+            const canvas = document.getElementById(`crop-canvas-${crop.id}`);
+            const wrap = document.getElementById(`crop-viewport-wrap-${crop.id}`);
+            const badge = document.getElementById(`crop-scale-badge-${crop.id}`);
+            const toggleBtn = document.getElementById(`crop-toggle-1to1-${crop.id}`);
+            const posInfo = document.getElementById(`crop-pos-info-${crop.id}`);
+
+            if (!canvas || !wrap) return;
+
+            const availableWidth = Math.max(280, wrap.clientWidth - 36);
+            const metrics = calculateDisplayMetrics(crop, availableWidth);
+
+            canvas.style.width = `${metrics.displayWidth}px`;
+            canvas.style.height = `${metrics.displayHeight}px`;
+
+            const scalePercent = Math.round(metrics.displayScale * 100);
+
+            if (crop.width > 1000 || crop.height > 1000) {
+                toggleBtn.classList.remove('hidden');
+                toggleBtn.textContent = crop.forceActualSizeView
+                    ? 'Ekrana Orantılı Sığdır'
+                    : '1:1 Gerçek Boyut Göster';
+            } else {
+                toggleBtn.classList.add('hidden');
+            }
+
+            if (metrics.isScaledDown) {
+                badge.className = 'text-xs font-medium px-2.5 py-1 rounded-lg border bg-amber-50 text-amber-800 border-amber-200 dark:bg-amber-950/40 dark:text-amber-300 dark:border-amber-800/60';
+                badge.textContent = `1000px+ Ekrana Sığdırıldı (%${scalePercent} görünüm • Kayıtta tam ${crop.width}×${crop.height} px)`;
+            } else {
+                badge.className = 'text-xs font-medium px-2.5 py-1 rounded-lg border bg-emerald-50 text-emerald-700 border-emerald-200 dark:bg-emerald-950/40 dark:text-emerald-300 dark:border-emerald-800/60';
+                badge.textContent = `Canlı 1:1 Gerçek Boyut (%100 Piksel Görünümü)`;
+            }
+
+            if (posInfo) {
+                posInfo.textContent = `X: ${Math.round(crop.offsetX)}px, Y: ${Math.round(crop.offsetY)}px`;
+            }
+        }
+
+        /**
+         * Zoom slider değerini ve yüzdesini senkronize eder.
+         * Cover ölçeğini %100 referans baz alarak kullanıcıya sezgisel bir yüzde sunar.
+         */
+        function syncZoomSliderUI(crop) {
+            const slider = document.getElementById(`crop-zoom-slider-${crop.id}`);
+            const label = document.getElementById(`crop-zoom-label-${crop.id}`);
+            if (!slider || !label) return;
+
+            const cover = computeCoverTransform(crop.width, crop.height).scale;
+            const relativePercent = Math.round((crop.scale / cover) * 100);
+
+            slider.value = Math.max(100, Math.min(400, relativePercent));
+            label.textContent = `%${Math.max(100, relativePercent)}`;
+        }
+
+        /**
+         * Zoom slider değiştiğinde merkez noktayı koruyarak yakınlaştırır
+         */
+        function handleZoomSlider(cropId, sliderValue) {
+            const crop = state.crops.find(c => c.id === cropId);
+            if (!crop) return;
+
+            const cover = computeCoverTransform(crop.width, crop.height).scale;
+            const clampedPercent = Math.max(100, Math.min(400, Number(sliderValue) || 100));
+            const newScale = cover * (clampedPercent / 100);
+
+            zoomCropAroundCenter(crop, newScale);
+        }
+
+        /**
+         * +/- butonlarıyla kademeli yakınlaştırma
+         */
+        function stepZoom(cropId, deltaRatio) {
+            const crop = state.crops.find(c => c.id === cropId);
+            if (!crop) return;
+
+            const newScale = Math.max(crop.minScale, Math.min(crop.maxScale, crop.scale * (1 + deltaRatio)));
+            zoomCropAroundCenter(crop, newScale);
+        }
+
+        function zoomCropAroundCenter(crop, newScale) {
+            const centerX = crop.width / 2;
+            const centerY = crop.height / 2;
+
+            const imgX = (centerX - crop.offsetX) / crop.scale;
+            const imgY = (centerY - crop.offsetY) / crop.scale;
+
+            crop.scale = newScale;
+            crop.offsetX = centerX - imgX * newScale;
+            crop.offsetY = centerY - imgY * newScale;
+
+            clampCropTransform(crop);
+            syncZoomSliderUI(crop);
+            drawCropCanvas(crop);
+        }
+
+        /**
+         * Kırpma alanını %100 minimum doldurma oranına sıfırlar ve ortalar
+         */
+        function resetCropToCover(cropId) {
+            const crop = state.crops.find(c => c.id === cropId);
+            if (!crop) return;
+            const t = computeCoverTransform(crop.width, crop.height);
+            crop.scale = t.scale;
+            crop.minScale = t.minScale;
+            crop.maxScale = t.maxScale;
+            crop.offsetX = t.offsetX;
+            crop.offsetY = t.offsetY;
+            clampCropTransform(crop);
+            syncZoomSliderUI(crop);
+            drawCropCanvas(crop);
+        }
+
+        /**
+         * Mevcut yakınlaştırma oranını bozmadan görseli kırpma alanının tam merkezine hizalar
+         */
+        function centerCropImage(cropId) {
+            const crop = state.crops.find(c => c.id === cropId);
+            if (!crop || !state.sourceImage) return;
+            const drawnW = state.sourceWidth * crop.scale;
+            const drawnH = state.sourceHeight * crop.scale;
+            crop.offsetX = (crop.width - drawnW) / 2;
+            crop.offsetY = (crop.height - drawnH) / 2;
+            clampCropTransform(crop);
+            drawCropCanvas(crop);
+        }
+
+        /**
+         * 1000px üzerindeki bir kırpma kutusunda 1:1 gerçek boyut ile ekrana sığdırma arasında geçiş yapar
+         */
+        function toggleForceActualSize(cropId) {
+            const crop = state.crops.find(c => c.id === cropId);
+            if (!crop) return;
+            crop.forceActualSizeView = !crop.forceActualSizeView;
+            updateCropDisplaySizingAndUI(crop);
+        }
+
+        /**
+         * Mevcut bir kırpma kartının genişlik/yükseklik değerlerini canlı günceller
+         */
+        function updateCropDimensions(cropId) {
+            const crop = state.crops.find(c => c.id === cropId);
+            if (!crop) return;
+
+            const wInput = document.getElementById(`edit-w-${crop.id}`);
+            const hInput = document.getElementById(`edit-h-${crop.id}`);
+
+            const newW = Math.max(16, Math.min(8000, Math.round(Number(wInput.value) || crop.width)));
+            const newH = Math.max(16, Math.min(8000, Math.round(Number(hInput.value) || crop.height)));
+
+            wInput.value = newW;
+            hInput.value = newH;
+
+            crop.width = newW;
+            crop.height = newH;
+
+            const t = computeCoverTransform(newW, newH);
+            crop.scale = t.scale;
+            crop.minScale = t.minScale;
+            crop.maxScale = t.maxScale;
+            crop.offsetX = t.offsetX;
+            crop.offsetY = t.offsetY;
+
+            document.getElementById(`crop-dim-title-${crop.id}`).textContent = `${newW} × ${newH} px`;
+            document.getElementById(`crop-outsize-info-${crop.id}`).textContent = `${newW}×${newH} px (Tam Boyut)`;
+            updateCropFileNameLabels(crop);
+            syncZoomSliderUI(crop);
+            drawCropCanvas(crop);
+            savePreferencesToStorage();
+            updateGlobalHeaderBadges();
+        }
+
+        function updateCropBgColor(cropId, color) {
+            const crop = state.crops.find(c => c.id === cropId);
+            if (!crop) return;
+            crop.bgColor = color;
+            drawCropCanvas(crop);
+        }
+
+        function duplicateCrop(cropId) {
+            const src = state.crops.find(c => c.id === cropId);
+            if (!src) return;
+            addCropSize(src.width, src.height);
+        }
+
+        function removeCrop(cropId) {
+            state.crops = state.crops.filter(c => c.id !== cropId);
+            const card = document.getElementById(`crop-card-${cropId}`);
+            if (card) card.remove();
+            savePreferencesToStorage();
+            updateWorkspaceStateUI();
+            showToast('Kırpma boyutu kaldırıldı.', 'info');
+        }
+
+        /**
+         * İstenen dosya isimlendirme formatını üretir:
+         * Dosyaismi-1254x548.webp veya Dosyaismi-1254x548.jpg
+         */
+        function getTargetFileName(crop) {
+            const cleanBase = (state.baseFileName || 'gorsel').trim().replace(/[\\/:*?"<>|]+/g, '-');
+            const ext = state.globalFormat === 'webp' ? 'webp' : 'jpg';
+            return `${cleanBase}-${crop.width}x${crop.height}.${ext}`;
+        }
+
+        function updateCropFileNameLabels(crop) {
+            const previewEl = document.getElementById(`crop-filename-preview-${crop.id}`);
+            const btnTextEl = document.getElementById(`crop-download-btn-text-${crop.id}`);
+            const fileName = getTargetFileName(crop);
+            if (previewEl) previewEl.textContent = fileName;
+            if (btnTextEl) btnTextEl.textContent = `İndir (${fileName})`;
+        }
+
+        function updateAllFileNameLabels() {
+            state.crops.forEach(crop => updateCropFileNameLabels(crop));
+            const firstCrop = state.crops[0];
+            const sampleEl = document.getElementById('sampleOutputNamePreview');
+            if (sampleEl) {
+                const w = firstCrop ? firstCrop.width : '1254';
+                const h = firstCrop ? firstCrop.height : '548';
+                const cleanBase = (state.baseFileName || 'Dosyaismi').trim();
+                sampleEl.textContent = `${cleanBase}-${w}x${h}.${state.globalFormat}`;
+            }
+        }
+
+        /**
+         * Boş durum ekranı (Empty State), adım göstergeleri ve üst bar butonlarını günceller
+         */
+        function updateWorkspaceStateUI() {
+            const hasImage = Boolean(state.sourceImage);
+            const cropCount = state.crops.length;
+
+            // Üst bar "Tümünü İndir" butonu ve "Tüm Boyutları Temizle" butonu
+            const badge = document.getElementById('totalCropCountBadge');
+            const downloadAllBtn = document.getElementById('downloadAllBtn');
+            const clearAllSizesBtn = document.getElementById('clearAllSizesBtn');
+            if (badge) badge.textContent = cropCount;
+            if (downloadAllBtn) {
+                downloadAllBtn.disabled = !(hasImage && cropCount > 0);
+            }
+            if (clearAllSizesBtn) {
+                if (cropCount > 0) {
+                    clearAllSizesBtn.classList.remove('hidden');
+                } else {
+                    clearAllSizesBtn.classList.add('hidden');
+                }
+            }
+
+            // İpucu çubuğu ve Boş Durum ekranı görünürlüğü
+            const emptySection = document.getElementById('emptyStateSection');
+            const hintBar = document.getElementById('workspaceHintBar');
+
+            if (hasImage && cropCount > 0) {
+                emptySection.classList.add('hidden');
+                hintBar.classList.remove('hidden');
+            } else {
+                emptySection.classList.remove('hidden');
+                hintBar.classList.add('hidden');
+            }
+
+            // Adım 1 ve Adım 2 görsel durumları
+            const stepIconImage = document.getElementById('stepIconImage');
+            const stepTextImage = document.getElementById('stepTextImage');
+            const stepIconSize = document.getElementById('stepIconSize');
+            const stepTextSize = document.getElementById('stepTextSize');
+            const emptyTitle = document.getElementById('emptyStateTitle');
+            const emptySubtitle = document.getElementById('emptyStateSubtitle');
+
+            if (hasImage) {
+                stepIconImage.className = 'w-10 h-10 rounded-xl bg-emerald-500 text-white flex items-center justify-center font-bold text-sm shrink-0';
+                stepIconImage.textContent = '✓';
+                stepTextImage.textContent = `Görsel Hazır (${state.sourceWidth}×${state.sourceHeight} px)`;
+            } else {
+                stepIconImage.className = 'w-10 h-10 rounded-xl bg-brand-600 text-white flex items-center justify-center font-bold text-sm shrink-0';
+                stepIconImage.textContent = '1';
+                stepTextImage.textContent = 'Dosya Ekle (Tıkla veya Sürükle)';
+            }
+
+            if (cropCount > 0) {
+                stepIconSize.className = 'w-10 h-10 rounded-xl bg-emerald-500 text-white flex items-center justify-center font-bold text-sm shrink-0';
+                stepIconSize.textContent = '✓';
+                stepTextSize.textContent = `${cropCount} Adet Boyut Seçildi`;
+            } else {
+                stepIconSize.className = 'w-10 h-10 rounded-xl bg-brand-600 text-white flex items-center justify-center font-bold text-sm shrink-0';
+                stepIconSize.textContent = '2';
+                stepTextSize.textContent = 'Boyut Seç / Ölçü Ekle';
+            }
+
+            if (!hasImage && cropCount === 0) {
+                emptyTitle.textContent = 'Başlamak İçin Dosya Ekleyin ve Boyut Seçin';
+                emptySubtitle.textContent = 'Yukarıdan veya aşağıdaki kutulardan görselinizi yükleyin ve kırpmak istediğiniz piksel ölçülerini ekleyin.';
+            } else if (hasImage && cropCount === 0) {
+                emptyTitle.textContent = 'Görsel Yüklendi! Şimdi Kırpma Boyutu Seçin';
+                emptySubtitle.textContent = 'Sağ üstteki "3. Boyut Seç / Ekle" alanından istediğiniz genişlik ve yükseklik değerini girip "Boyut Ekle" butonuna basın.';
+            } else if (!hasImage && cropCount > 0) {
+                emptyTitle.textContent = 'Boyutlar Hazır! Şimdi Görselinizi Yükleyin';
+                emptySubtitle.textContent = 'Eklediğiniz ölçülerde canlı kırpma yapmak için bilgisayarınızdan bir görsel seçin veya sayfaya sürükleyin.';
+            }
+
+            // Eğer görsel henüz yüklenmemiş ama boyut eklenmişse bekleyen boyutları rozet olarak göster
+            const pendingContainer = document.getElementById('pendingSizesContainer');
+            const pendingList = document.getElementById('pendingSizesList');
+            if (!hasImage && cropCount > 0) {
+                pendingContainer.classList.remove('hidden');
+                pendingList.innerHTML = state.crops.map(c => `
+                    <span class="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-xl bg-brand-50 dark:bg-brand-950/60 text-brand-700 dark:text-brand-300 border border-brand-200 dark:border-brand-800 font-mono text-xs font-semibold">
+                        ${c.width} × ${c.height} px
+                        <button type="button" onclick="removeCrop(${c.id})" class="ml-1 text-slate-400 hover:text-rose-500 font-bold" title="Kaldır">✕</button>
+                    </span>
+                `).join('');
+            } else {
+                pendingContainer.classList.add('hidden');
+                pendingList.innerHTML = '';
+            }
+
+            updateAllFileNameLabels();
+        }
+
+        function updateGlobalHeaderBadges() {
+            updateWorkspaceStateUI();
+        }
+
+        /**
+         * Dosya yükleme (File Input veya Drag & Drop)
+         */
+        function handleFileSelect(event) {
+            const file = event.target.files && event.target.files[0];
+            if (file) loadUploadedFile(file);
+        }
+
+        function loadUploadedFile(file) {
+            if (!file.type.startsWith('image/')) {
+                showToast('Lütfen geçerli bir görsel dosyası (JPG, PNG, WebP vb.) seçin.', 'error');
+                return;
+            }
+
+            // Uzantısız dosya adını ayıkla
+            const lastDot = file.name.lastIndexOf('.');
+            const rawName = lastDot > 0 ? file.name.substring(0, lastDot) : file.name;
+            state.baseFileName = rawName || 'gorsel';
+
+            document.getElementById('baseFileNameInput').value = state.baseFileName;
+            document.getElementById('uploadedFileNameDisplay').textContent = file.name;
+
+            const reader = new FileReader();
+            reader.onload = (e) => {
+                const img = new Image();
+                img.onload = () => {
+                    state.sourceImage = img;
+                    state.sourceWidth = img.naturalWidth || img.width;
+                    state.sourceHeight = img.naturalHeight || img.height;
+
+                    document.getElementById('sourceDimensionsBadge').textContent = `${state.sourceWidth} × ${state.sourceHeight} px`;
+                    const thumb = document.getElementById('sourceThumbnail');
+                    const placeholderIcon = document.getElementById('sourcePlaceholderIcon');
+                    thumb.src = e.target.result;
+                    thumb.classList.remove('hidden');
+                    if (placeholderIcon) placeholderIcon.classList.add('hidden');
+
+                    // Mevcut kırpma kutularını yeniden oluştur veya yeni görsele göre ortala
+                    const container = document.getElementById('cropsListContainer');
+                    container.innerHTML = '';
+
+                    state.crops.forEach(crop => {
+                        const t = computeCoverTransform(crop.width, crop.height);
+                        crop.scale = t.scale;
+                        crop.minScale = t.minScale;
+                        crop.maxScale = t.maxScale;
+                        crop.offsetX = t.offsetX;
+                        crop.offsetY = t.offsetY;
+                        renderCropCardDOM(crop);
+                    });
+
+                    updateWorkspaceStateUI();
+                    showToast(`"${file.name}" (${state.sourceWidth}×${state.sourceHeight} px) yüklendi.`, 'success');
+                };
+                img.onerror = () => {
+                    showToast('Görsel okunamadı, lütfen başka bir dosya deneyin.', 'error');
+                };
+                img.src = e.target.result;
+            };
+            reader.readAsDataURL(file);
+        }
+
+        /**
+         * Tek bir kırpma kutusunu tam çözünürlükte (ör. 1920x1080) WebP veya JPG olarak indirir
+         */
+        function downloadSingleCrop(cropId) {
+            const crop = state.crops.find(c => c.id === cropId);
+            if (!crop) return;
+
+            // Kılavuz çizgisi olmadan tam boyutta temiz çizim yap
+            drawCropCanvas(crop, true);
+
+            const canvas = document.getElementById(`crop-canvas-${crop.id}`);
+            const mimeType = state.globalFormat === 'webp' ? 'image/webp' : 'image/jpeg';
+            const fileName = getTargetFileName(crop);
+
+            canvas.toBlob((blob) => {
+                if (!blob) {
+                    // Fallback to dataURL
+                    const dataUrl = canvas.toDataURL(mimeType, state.globalQuality);
+                    triggerDownloadUrl(dataUrl, fileName);
+                    showToast(`${fileName} indirildi.`, 'success');
+                    return;
+                }
+                const url = URL.createObjectURL(blob);
+                triggerDownloadUrl(url, fileName);
+                setTimeout(() => URL.revokeObjectURL(url), 5000);
+                const sizeKB = Math.max(1, Math.round(blob.size / 1024));
+                showToast(`${fileName} (${sizeKB} KB) tam boyutta indirildi.`, 'success');
+            }, mimeType, state.globalQuality);
+        }
+
+        /**
+         * Tüm eklenmiş boyutları sırayla indirir
+         */
+        function downloadAllCrops() {
+            if (state.crops.length === 0) return;
+            showToast(`${state.crops.length} adet görsel sırayla indiriliyor...`, 'info');
+            state.crops.forEach((crop, idx) => {
+                setTimeout(() => {
+                    downloadSingleCrop(crop.id);
+                }, idx * 280);
+            });
+        }
+
+        function triggerDownloadUrl(url, fileName) {
+            const a = document.createElement('a');
+            a.href = url;
+            a.download = fileName;
+            document.body.appendChild(a);
+            a.click();
+            document.body.removeChild(a);
+        }
+
+        function handleBaseNameChange(val) {
+            state.baseFileName = val.trim() || 'gorsel';
+            updateAllFileNameLabels();
+        }
+
+        function setGlobalFormat(fmt, skipSave = false) {
+            state.globalFormat = fmt === 'jpg' ? 'jpg' : 'webp';
+            const webpBtn = document.getElementById('fmtWebpBtn');
+            const jpgBtn = document.getElementById('fmtJpgBtn');
+
+            if (state.globalFormat === 'webp') {
+                webpBtn.className = 'py-1.5 px-2.5 rounded-lg text-xs font-bold transition-all bg-brand-600 text-white shadow-sm';
+                jpgBtn.className = 'py-1.5 px-2.5 rounded-lg text-xs font-bold transition-all text-slate-600 dark:text-slate-300 hover:bg-slate-200/60 dark:hover:bg-slate-700/60';
+            } else {
+                jpgBtn.className = 'py-1.5 px-2.5 rounded-lg text-xs font-bold transition-all bg-brand-600 text-white shadow-sm';
+                webpBtn.className = 'py-1.5 px-2.5 rounded-lg text-xs font-bold transition-all text-slate-600 dark:text-slate-300 hover:bg-slate-200/60 dark:hover:bg-slate-700/60';
+            }
+            updateAllFileNameLabels();
+            if (!skipSave) savePreferencesToStorage();
+        }
+
+        function handleQualityChange(val, skipSave = false) {
+            const num = Math.max(10, Math.min(100, Number(val) || 90));
+            state.globalQuality = num / 100;
+            document.getElementById('qualityValueLabel').textContent = `%${num}`;
+            if (!skipSave) savePreferencesToStorage();
+        }
+
+        function handleAddSizeForm(e) {
+            e.preventDefault();
+            const w = document.getElementById('newWidthInput').value;
+            const h = document.getElementById('newHeightInput').value;
+            addCropSize(w, h);
+        }
+
+        function quickAddSize(w, h) {
+            document.getElementById('newWidthInput').value = w;
+            document.getElementById('newHeightInput').value = h;
+            addCropSize(w, h);
+        }
+
+        function toggleGridOverlay(checked) {
+            state.showGridOnDrag = checked;
+        }
+
+        function toggleTheme() {
+            document.documentElement.classList.toggle('dark');
+        }
+
+        /**
+         * Bildirim (Toast) Gösterimi
+         */
+        function showToast(message, type = 'info') {
+            const container = document.getElementById('toastContainer');
+            const toast = document.createElement('div');
+            const colors = {
+                success: 'bg-emerald-600 text-white border-emerald-500',
+                error: 'bg-rose-600 text-white border-rose-500',
+                info: 'bg-slate-800 text-white border-slate-700'
+            };
+
+            toast.className = `pointer-events-auto px-4 py-3 rounded-xl border shadow-lg text-xs font-medium flex items-center justify-between gap-3 transition-all duration-300 ${colors[type] || colors.info}`;
+            toast.innerHTML = `
+                <span>${message}</span>
+                <button onclick="this.parentElement.remove()" class="opacity-75 hover:opacity-100 font-bold">✕</button>
+            `;
+            container.appendChild(toast);
+            setTimeout(() => {
+                if (toast.parentElement) toast.remove();
+            }, 3500);
+        }
+
+        /**
+         * Sürükle-Bırak (Drag & Drop) ve Pencere Yeniden Boyutlandırma Kurulumu
+         */
+        window.addEventListener('DOMContentLoaded', () => {
+            // Kullanıcının en son eklediği boyutları ve ayarları tarayıcı hafızasından (localStorage) geri yükle
+            loadPreferencesFromStorage();
+            updateWorkspaceStateUI();
+
+            // Hem üstteki dropZone hem de sayfa genelinde sürükle-bırak ile dosya yükleme desteği
+            const dropZone = document.getElementById('dropZone');
+            const emptyStateSection = document.getElementById('emptyStateSection');
+
+            [dropZone, emptyStateSection].forEach(zone => {
+                if (!zone) return;
+                ['dragenter', 'dragover'].forEach(evt => {
+                    zone.addEventListener(evt, (e) => {
+                        e.preventDefault();
+                        e.stopPropagation();
+                        zone.classList.add('border-brand-500', 'bg-brand-50/40');
+                    });
+                });
+                ['dragleave', 'drop'].forEach(evt => {
+                    zone.addEventListener(evt, (e) => {
+                        e.preventDefault();
+                        e.stopPropagation();
+                        zone.classList.remove('border-brand-500', 'bg-brand-50/40');
+                    });
+                });
+                zone.addEventListener('drop', (e) => {
+                    const file = e.dataTransfer && e.dataTransfer.files && e.dataTransfer.files[0];
+                    if (file) loadUploadedFile(file);
+                });
+            });
+
+            // Ekran boyutu değiştiğinde >1000px veya ekrana sığdırma oranlarını güncelle
+            window.addEventListener('resize', () => {
+                if (state.sourceImage) {
+                    state.crops.forEach(crop => updateCropDisplaySizingAndUI(crop));
+                }
+            });
+        });
+    </script>
+</body>
+</html>
